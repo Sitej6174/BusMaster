@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}System Overview{% endblock %}
+
+{% block content %}
+<div class="stats-grid" id="stats-grid">
+  <!-- Populated by JS -->
+  <div class="stat-card"><div class="spinner"></div></div>
+  <div class="stat-card"><div class="spinner"></div></div>
+  <div class="stat-card"><div class="spinner"></div></div>
+  <div class="stat-card"><div class="spinner"></div></div>
+</div>
+
+<div class="dashboard-grid">
+  <!-- Recent Schedules Table -->
+  <div class="table-container">
+    <div class="table-header">
+      <span class="table-header-title">Recent Schedules</span>
+      <a href="/schedules" class="btn btn-secondary btn-sm">View All</a>
+    </div>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Schedule</th>
+          <th>Bus</th>
+          <th>Driver</th>
+          <th>Route</th>
+          <th>Date</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="recent-tbody">
+        <tr><td colspan="6" style="text-align:center;padding:30px;color:var(--grey-300);">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Quick Actions + Status -->
+  <div style="display:flex;flex-direction:column;gap:16px;">
+    <div class="card">
+      <div class="card-title">Quick Actions</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <a href="/buses" class="btn btn-secondary w-full" style="justify-content:flex-start;">◈ &nbsp;Add New Bus</a>
+        <a href="/drivers" class="btn btn-secondary w-full" style="justify-content:flex-start;">◉ &nbsp;Add New Driver</a>
+        <a href="/routes" class="btn btn-secondary w-full" style="justify-content:flex-start;">◈ &nbsp;Create Route</a>
+        <a href="/schedules" class="btn btn-primary w-full" style="justify-content:flex-start;">◫ &nbsp;Create Schedule</a>
+      </div>
+    </div>
+
+    <div class="card" id="fleet-status-card">
+      <div class="card-title">Fleet Status</div>
+      <div id="fleet-status">
+        <div class="spinner"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function loadDashboard() {
+  const res = await API.get('/dashboard/stats');
+  if (!res.success) return;
+  const d = res.data;
+
+  document.getElementById('stats-grid').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-label">Total Buses</div>
+      <div class="stat-value">${d.buses.total}</div>
+      <div class="stat-sub"><span class="highlight">${d.buses.active}</span> active</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Drivers</div>
+      <div class="stat-value">${d.drivers.total}</div>
+      <div class="stat-sub"><span class="highlight">${d.drivers.available}</span> available</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Routes</div>
+      <div class="stat-value">${d.routes.total}</div>
+      <div class="stat-sub"><span class="highlight">${d.routes.active}</span> active</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Schedules</div>
+      <div class="stat-value">${d.schedules.total}</div>
+      <div class="stat-sub"><span class="highlight">${d.schedules.today}</span> today</div>
+    </div>
+  `;
+
+  document.getElementById('fleet-status').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      ${statusRow('Active Buses',     d.buses.active,     d.buses.total,     'var(--green)')}
+      ${statusRow('Available Drivers',d.drivers.available,d.drivers.total,   'var(--blue)')}
+      ${statusRow('Active Routes',    d.routes.active,    d.routes.total,    'var(--amber)')}
+    </div>
+  `;
+}
+
+function statusRow(label, val, total, color) {
+  const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+  return `
+    <div>
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;">
+        <span style="color:var(--grey-200)">${label}</span>
+        <span style="color:${color};font-weight:600;">${val}/${total}</span>
+      </div>
+      <div style="background:var(--navy-600);border-radius:20px;height:5px;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${color};border-radius:20px;transition:width 1s ease;"></div>
+      </div>
+    </div>`;
+}
+
+async function loadRecentSchedules() {
+  const res = await API.get('/dashboard/recent-schedules');
+  const tbody = document.getElementById('recent-tbody');
+  if (!res.success || !res.data.length) {
+    tbody.innerHTML = emptyState('No schedules yet. Create your first schedule!');
+    return;
+  }
+  tbody.innerHTML = res.data.map(s => `
+    <tr>
+      <td style="font-weight:500;">${s.schedule_name}</td>
+      <td><span class="mono">${s.bus_number || '—'}</span></td>
+      <td>${s.driver_name || '—'}</td>
+      <td><span class="mono">${s.route_number || '—'}</span></td>
+      <td>${formatDate(s.schedule_date)}</td>
+      <td>${statusBadge(s.status)}</td>
+    </tr>
+  `).join('');
+}
+
+loadDashboard();
+loadRecentSchedules();
+</script>
+{% endblock %}

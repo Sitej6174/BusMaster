@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Fleet Management{% endblock %}
+{% block page_title %}Fleet{% endblock %}
+{% block page_subtitle %}Bus Management{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openAddBusModal()">+ Add Bus</button>
+{% endblock %}
+
+{% block content %}
+<div class="table-container">
+  <div class="table-header">
+    <span class="table-header-title">All Buses <span id="bus-count" style="color:var(--amber);margin-left:8px;"></span></span>
+    <div style="display:flex;gap:8px;">
+      <select class="form-control" style="width:140px;padding:6px 12px;" onchange="filterBuses(this.value)">
+        <option value="">All Status</option>
+        <option value="Active">Active</option>
+        <option value="Maintenance">Maintenance</option>
+        <option value="Retired">Retired</option>
+      </select>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Bus No.</th>
+        <th>Plate</th>
+        <th>Type</th>
+        <th>Capacity</th>
+        <th>Year</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="buses-tbody">
+      <tr><td colspan="7" style="text-align:center;padding:30px;color:var(--grey-300);">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allBuses = [];
+
+async function loadBuses() {
+  const res = await API.get('/buses/');
+  if (!res.success) { showToast('Failed to load buses', 'error'); return; }
+  allBuses = res.data;
+  renderBuses(allBuses);
+  document.getElementById('bus-count').textContent = `(${allBuses.length})`;
+}
+
+function filterBuses(status) {
+  const filtered = status ? allBuses.filter(b => b.status === status) : allBuses;
+  renderBuses(filtered);
+}
+
+function renderBuses(buses) {
+  const tbody = document.getElementById('buses-tbody');
+  if (!buses.length) { tbody.innerHTML = emptyState('No buses found. Add your first bus!'); return; }
+  tbody.innerHTML = buses.map(b => `
+    <tr>
+      <td><span class="mono">${b.bus_number}</span></td>
+      <td>${b.plate_number}</td>
+      <td>${b.bus_type}</td>
+      <td>${b.capacity} seats</td>
+      <td>${b.manufactured_year || '—'}</td>
+      <td>${statusBadge(b.status)}</td>
+      <td>
+        <div class="actions-cell">
+          <button class="btn btn-secondary btn-sm" onclick="openEditBusModal(${JSON.stringify(b).replace(/"/g,'&quot;')})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteBus(${b.id}, '${b.bus_number}')">Delete</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function busForm(bus = {}) {
+  return `
+  <div class="form-grid">
+    <div class="form-group">
+      <label class="form-label">Bus Number *</label>
+      <input class="form-control" id="f-bus_number" value="${bus.bus_number || ''}" placeholder="e.g. BUS-001">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Plate Number *</label>
+      <input class="form-control" id="f-plate_number" value="${bus.plate_number || ''}" placeholder="e.g. ABC-1234">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Capacity (seats) *</label>
+      <input class="form-control" type="number" id="f-capacity" value="${bus.capacity || ''}" placeholder="50">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Bus Type</label>
+      <select class="form-control" id="f-bus_type">
+        ${['Standard','Express','Mini','Double Decker'].map(t => `<option ${bus.bus_type===t?'selected':''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Manufactured Year</label>
+      <input class="form-control" type="number" id="f-manufactured_year" value="${bus.manufactured_year || ''}" placeholder="2020">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-control" id="f-status">
+        ${['Active','Maintenance','Retired'].map(s => `<option ${bus.status===s?'selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitBus(${bus.id || 'null'})">
+      ${bus.id ? 'Save Changes' : 'Add Bus'}
+    </button>
+  </div>`;
+}
+
+function openAddBusModal() {
+  openModal('Add New Bus', busForm());
+}
+
+function openEditBusModal(bus) {
+  openModal('Edit Bus — ' + bus.bus_number, busForm(bus));
+}
+
+async function submitBus(id) {
+  const payload = {
+    bus_number:        document.getElementById('f-bus_number').value.trim(),
+    plate_number:      document.getElementById('f-plate_number').value.trim(),
+    capacity:          parseInt(document.getElementById('f-capacity').value),
+    bus_type:          document.getElementById('f-bus_type').value,
+    manufactured_year: parseInt(document.getElementById('f-manufactured_year').value) || null,
+    status:            document.getElementById('f-status').value,
+  };
+  if (!payload.bus_number || !payload.plate_number || !payload.capacity) {
+    showToast('Please fill all required fields', 'error'); return;
+  }
+  const res = id ? await API.put(`/buses/${id}`, payload) : await API.post('/buses/', payload);
+  if (res.success) {
+    showToast(res.message, 'success');
+    closeModal();
+    loadBuses();
+  } else {
+    showToast(res.message, 'error');
+  }
+}
+
+async function deleteBus(id, number) {
+  confirmDelete(`Are you sure you want to delete bus <strong>${number}</strong>? This cannot be undone.`, async () => {
+    const res = await API.delete(`/buses/${id}`);
+    if (res.success) { showToast('Bus deleted', 'success'); loadBuses(); }
+    else showToast(res.message, 'error');
+  });
+}
+
+loadBuses();
+</script>
+{% endblock %}

@@ -1,0 +1,286 @@
+{% extends "base.html" %}
+{% block title %}Routes & Map{% endblock %}
+{% block page_title %}Routes{% endblock %}
+{% block page_subtitle %}Network Map & Route Management{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openAddRouteModal()">+ Create Route</button>
+{% endblock %}
+
+{% block content %}
+<!-- Map Section -->
+<div class="card mb-6">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+    <div class="card-title" style="margin:0;">Live Route Map</div>
+    <div class="map-controls" style="margin:0;">
+      <button class="btn btn-secondary btn-sm" onclick="clearMapLayers()">Clear Map</button>
+      <button class="btn btn-secondary btn-sm" onclick="showAllRoutes()">Show All Routes</button>
+    </div>
+  </div>
+  <div id="route-map"></div>
+  <div class="route-legend" id="map-legend">
+    <span style="color:var(--grey-300);font-size:12px;">Click a route to display it on map</span>
+  </div>
+</div>
+
+<!-- Routes Table -->
+<div class="table-container">
+  <div class="table-header">
+    <span class="table-header-title">All Routes <span id="route-count" style="color:var(--amber);margin-left:8px;"></span></span>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Route No.</th>
+        <th>Name</th>
+        <th>From</th>
+        <th>To</th>
+        <th>Distance</th>
+        <th>Duration</th>
+        <th>Stops</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="routes-tbody">
+      <tr><td colspan="9" style="text-align:center;padding:30px;color:var(--grey-300);">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let map, routeLayers = {}, allRoutes = [];
+const COLORS = ['#F59E0B','#3B82F6','#10B981','#EF4444','#8B5CF6','#EC4899','#06B6D4','#84CC16'];
+
+// Init Leaflet map
+function initMap() {
+  map = L.map('route-map', { zoomControl: true }).setView([3.1390, 101.6869], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors',
+    maxZoom: 18
+  }).addTo(map);
+
+  // Darker map style
+  map.getContainer().style.filter = 'brightness(0.85) saturate(1.2)';
+}
+
+function clearMapLayers() {
+  Object.values(routeLayers).forEach(l => map.removeLayer(l));
+  routeLayers = {};
+  document.getElementById('map-legend').innerHTML = '<span style="color:var(--grey-300);font-size:12px;">Map cleared</span>';
+}
+
+function showAllRoutes() {
+  clearMapLayers();
+  allRoutes.forEach((r, i) => plotRoute(r, COLORS[i % COLORS.length]));
+  buildLegend();
+}
+
+function plotRoute(route, color) {
+  if (!route.start_lat || !route.start_lng || !route.end_lat || !route.end_lng) return;
+
+  const group = L.layerGroup();
+
+  // Start marker
+  const startIcon = L.divIcon({
+    html: `<div style="background:${color};border:2px solid #fff;border-radius:50%;width:14px;height:14px;"></div>`,
+    className: '', iconAnchor: [7, 7]
+  });
+  const endIcon = L.divIcon({
+    html: `<div style="background:${color};border:3px solid #fff;border-radius:3px;width:14px;height:14px;transform:rotate(45deg);"></div>`,
+    className: '', iconAnchor: [7, 7]
+  });
+
+  const startMarker = L.marker([route.start_lat, route.start_lng], { icon: startIcon })
+    .bindPopup(`<b style="color:#111">${route.route_number}</b><br>Start: ${route.start_location}`);
+  const endMarker = L.marker([route.end_lat, route.end_lng], { icon: endIcon })
+    .bindPopup(`<b style="color:#111">${route.route_number}</b><br>End: ${route.end_location}`);
+
+  group.addLayer(startMarker);
+  group.addLayer(endMarker);
+
+  // Intermediate stops
+  route.stops.forEach(stop => {
+    if (!stop.lat || !stop.lng) return;
+    const stopIcon = L.divIcon({
+      html: `<div style="background:#fff;border:2px solid ${color};border-radius:50%;width:9px;height:9px;"></div>`,
+      className: '', iconAnchor: [4, 4]
+    });
+    L.marker([stop.lat, stop.lng], { icon: stopIcon })
+      .bindPopup(`<b style="color:#111">Stop ${stop.stop_order}</b><br>${stop.stop_name}`)
+      .addTo(group);
+  });
+
+  // Draw line between all points
+  const waypoints = [
+    [route.start_lat, route.start_lng],
+    ...route.stops.filter(s => s.lat && s.lng).map(s => [s.lat, s.lng]),
+    [route.end_lat, route.end_lng]
+  ];
+
+  L.polyline(waypoints, { color, weight: 4, opacity: 0.85, dashArray: null })
+    .bindPopup(`<b style="color:#111">Route ${route.route_number}</b><br>${route.route_name}`)
+    .addTo(group);
+
+  group.addTo(map);
+  routeLayers[route.id] = group;
+
+  // Fit bounds
+  map.fitBounds(waypoints);
+}
+
+function buildLegend() {
+  const legend = document.getElementById('map-legend');
+  if (!allRoutes.length) { legend.innerHTML = '<span style="color:var(--grey-300)">No routes to display</span>'; return; }
+  legend.innerHTML = allRoutes.map((r, i) => `
+    <span class="legend-item" style="cursor:pointer;" onclick="toggleRoute(${r.id}, ${i})">
+      <span class="legend-dot" style="background:${COLORS[i % COLORS.length]}"></span>
+      ${r.route_number} — ${r.route_name}
+    </span>`).join('');
+}
+
+function toggleRoute(id, idx) {
+  if (routeLayers[id]) {
+    map.removeLayer(routeLayers[id]);
+    delete routeLayers[id];
+  } else {
+    const route = allRoutes.find(r => r.id === id);
+    if (route) plotRoute(route, COLORS[idx % COLORS.length]);
+  }
+}
+
+async function loadRoutes() {
+  const res = await API.get('/routes/');
+  if (!res.success) { showToast('Failed to load routes', 'error'); return; }
+  allRoutes = res.data;
+  renderRoutes(allRoutes);
+  document.getElementById('route-count').textContent = `(${allRoutes.length})`;
+  buildLegend();
+}
+
+function renderRoutes(routes) {
+  const tbody = document.getElementById('routes-tbody');
+  if (!routes.length) { tbody.innerHTML = emptyState('No routes found. Create your first route!'); return; }
+  tbody.innerHTML = routes.map((r, i) => `
+    <tr>
+      <td><span class="mono">${r.route_number}</span></td>
+      <td style="font-weight:500;">${r.route_name}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.start_location}">${r.start_location}</td>
+      <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${r.end_location}">${r.end_location}</td>
+      <td>${r.distance_km ? r.distance_km + ' km' : '—'}</td>
+      <td>${r.estimated_duration_min ? r.estimated_duration_min + ' min' : '—'}</td>
+      <td>${r.stops.length}</td>
+      <td>${statusBadge(r.status)}</td>
+      <td>
+        <div class="actions-cell">
+          <button class="btn btn-secondary btn-sm" onclick="highlightRoute(${r.id}, ${i})" title="Show on map">🗺</button>
+          <button class="btn btn-secondary btn-sm" onclick="openEditRouteModal(${JSON.stringify(r).replace(/"/g,'&quot;')})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteRoute(${r.id}, '${r.route_number}')">Del</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function highlightRoute(id, idx) {
+  clearMapLayers();
+  const route = allRoutes.find(r => r.id === id);
+  if (route) { plotRoute(route, COLORS[idx % COLORS.length]); buildLegend(); }
+}
+
+function routeForm(r = {}) {
+  return `
+  <div class="form-grid">
+    <div class="form-group">
+      <label class="form-label">Route Number *</label>
+      <input class="form-control" id="f-route_number" value="${r.route_number || ''}" placeholder="R-001">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Route Name *</label>
+      <input class="form-control" id="f-route_name" value="${r.route_name || ''}" placeholder="City Centre Express">
+    </div>
+    <div class="form-group form-full">
+      <label class="form-label">Start Location *</label>
+      <input class="form-control" id="f-start_location" value="${r.start_location || ''}" placeholder="Central Terminal">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Start Latitude</label>
+      <input class="form-control" type="number" step="any" id="f-start_lat" value="${r.start_lat || ''}" placeholder="3.1390">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Start Longitude</label>
+      <input class="form-control" type="number" step="any" id="f-start_lng" value="${r.start_lng || ''}" placeholder="101.6869">
+    </div>
+    <div class="form-group form-full">
+      <label class="form-label">End Location *</label>
+      <input class="form-control" id="f-end_location" value="${r.end_location || ''}" placeholder="Airport Terminal">
+    </div>
+    <div class="form-group">
+      <label class="form-label">End Latitude</label>
+      <input class="form-control" type="number" step="any" id="f-end_lat" value="${r.end_lat || ''}" placeholder="3.1200">
+    </div>
+    <div class="form-group">
+      <label class="form-label">End Longitude</label>
+      <input class="form-control" type="number" step="any" id="f-end_lng" value="${r.end_lng || ''}" placeholder="101.7500">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Distance (km)</label>
+      <input class="form-control" type="number" step="0.1" id="f-distance" value="${r.distance_km || ''}" placeholder="25.5">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Est. Duration (min)</label>
+      <input class="form-control" type="number" id="f-duration" value="${r.estimated_duration_min || ''}" placeholder="45">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-control" id="f-status">
+        ${['Active','Inactive'].map(s => `<option ${r.status===s?'selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitRoute(${r.id || 'null'})">${r.id ? 'Save Changes' : 'Create Route'}</button>
+  </div>`;
+}
+
+function openAddRouteModal()  { openModal('Create New Route', routeForm()); }
+function openEditRouteModal(r){ openModal('Edit Route — ' + r.route_number, routeForm(r)); }
+
+async function submitRoute(id) {
+  const payload = {
+    route_number:           document.getElementById('f-route_number').value.trim(),
+    route_name:             document.getElementById('f-route_name').value.trim(),
+    start_location:         document.getElementById('f-start_location').value.trim(),
+    end_location:           document.getElementById('f-end_location').value.trim(),
+    start_lat:              parseFloat(document.getElementById('f-start_lat').value) || null,
+    start_lng:              parseFloat(document.getElementById('f-start_lng').value) || null,
+    end_lat:                parseFloat(document.getElementById('f-end_lat').value) || null,
+    end_lng:                parseFloat(document.getElementById('f-end_lng').value) || null,
+    distance_km:            parseFloat(document.getElementById('f-distance').value) || null,
+    estimated_duration_min: parseInt(document.getElementById('f-duration').value) || null,
+    status:                 document.getElementById('f-status').value,
+  };
+  if (!payload.route_number || !payload.route_name || !payload.start_location || !payload.end_location) {
+    showToast('Please fill all required fields', 'error'); return;
+  }
+  const res = id ? await API.put(`/routes/${id}`, payload) : await API.post('/routes/', payload);
+  if (res.success) { showToast(res.message, 'success'); closeModal(); loadRoutes(); }
+  else showToast(res.message, 'error');
+}
+
+async function deleteRoute(id, number) {
+  confirmDelete(`Delete route <strong>${number}</strong>? All associated stops will be removed.`, async () => {
+    const res = await API.delete(`/routes/${id}`);
+    if (res.success) { showToast('Route deleted', 'success'); loadRoutes(); }
+    else showToast(res.message, 'error');
+  });
+}
+
+// Initialize
+initMap();
+loadRoutes();
+</script>
+{% endblock %}

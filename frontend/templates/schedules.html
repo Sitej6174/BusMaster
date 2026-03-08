@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Schedule Management{% endblock %}
+{% block page_title %}Schedules{% endblock %}
+{% block page_subtitle %}Duty Assignment & Conflict Detection{% endblock %}
+
+{% block topbar_actions %}
+<input type="date" class="form-control" id="date-filter" style="width:160px;padding:6px 12px;" onchange="filterByDate(this.value)">
+<button class="btn btn-primary" onclick="openAddScheduleModal()">+ Create Schedule</button>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Row -->
+<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:20px;" id="sched-stats">
+  <div class="stat-card"><div class="stat-label">Total Schedules</div><div class="stat-value" id="st-total">—</div></div>
+  <div class="stat-card"><div class="stat-label">Scheduled</div><div class="stat-value" id="st-scheduled">—</div></div>
+  <div class="stat-card"><div class="stat-label">In Progress</div><div class="stat-value" id="st-inprogress">—</div></div>
+  <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value" id="st-completed">—</div></div>
+</div>
+
+<div class="table-container">
+  <div class="table-header">
+    <span class="table-header-title">Schedules <span id="sched-count" style="color:var(--amber);margin-left:8px;"></span></span>
+    <div style="display:flex;gap:8px;">
+      <select class="form-control" style="width:150px;padding:6px 12px;" onchange="filterByStatus(this.value)">
+        <option value="">All Status</option>
+        <option value="Scheduled">Scheduled</option>
+        <option value="In Progress">In Progress</option>
+        <option value="Completed">Completed</option>
+        <option value="Cancelled">Cancelled</option>
+      </select>
+    </div>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Schedule</th>
+        <th>Bus</th>
+        <th>Driver</th>
+        <th>Route</th>
+        <th>Date</th>
+        <th>Departure</th>
+        <th>Arrival</th>
+        <th>Type</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="schedules-tbody">
+      <tr><td colspan="10" style="text-align:center;padding:30px;color:var(--grey-300);">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allSchedules = [], buses = [], drivers = [], routes = [];
+
+async function loadDropdownData() {
+  const [bRes, dRes, rRes] = await Promise.all([
+    API.get('/buses/'), API.get('/drivers/'), API.get('/routes/')
+  ]);
+  buses   = bRes.success   ? bRes.data.filter(b => b.status === 'Active') : [];
+  drivers = dRes.success   ? dRes.data.filter(d => d.status !== 'Off Duty') : [];
+  routes  = rRes.success   ? rRes.data.filter(r => r.status === 'Active') : [];
+}
+
+async function loadSchedules() {
+  const res = await API.get('/schedules/');
+  if (!res.success) { showToast('Failed to load schedules', 'error'); return; }
+  allSchedules = res.data;
+  renderSchedules(allSchedules);
+  updateStats(allSchedules);
+  document.getElementById('sched-count').textContent = `(${allSchedules.length})`;
+}
+
+function updateStats(schedules) {
+  document.getElementById('st-total').textContent     = schedules.length;
+  document.getElementById('st-scheduled').textContent  = schedules.filter(s => s.status === 'Scheduled').length;
+  document.getElementById('st-inprogress').textContent = schedules.filter(s => s.status === 'In Progress').length;
+  document.getElementById('st-completed').textContent  = schedules.filter(s => s.status === 'Completed').length;
+}
+
+function filterByDate(date) {
+  if (!date) { renderSchedules(allSchedules); return; }
+  renderSchedules(allSchedules.filter(s => s.schedule_date === date));
+}
+
+function filterByStatus(status) {
+  renderSchedules(status ? allSchedules.filter(s => s.status === status) : allSchedules);
+}
+
+function renderSchedules(schedules) {
+  const tbody = document.getElementById('schedules-tbody');
+  if (!schedules.length) { tbody.innerHTML = emptyState('No schedules found. Create a new schedule!'); return; }
+  tbody.innerHTML = schedules.map(s => `
+    <tr>
+      <td style="font-weight:500;">${s.schedule_name}</td>
+      <td><span class="mono">${s.bus_number || '—'}</span></td>
+      <td>${s.driver_name || '—'}</td>
+      <td><span class="mono">${s.route_number || '—'}</span> <span style="color:var(--grey-300);font-size:11px;">${s.route_name || ''}</span></td>
+      <td>${formatDate(s.schedule_date)}</td>
+      <td style="font-family:var(--font-mono);color:var(--amber);">${s.departure_time}</td>
+      <td style="font-family:var(--font-mono);color:var(--amber);">${s.arrival_time}</td>
+      <td>${statusBadge(s.schedule_type)}</td>
+      <td>${statusBadge(s.status)}</td>
+      <td>
+        <div class="actions-cell">
+          <button class="btn btn-secondary btn-sm" onclick="openEditScheduleModal(${JSON.stringify(s).replace(/"/g,'&quot;')})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteSchedule(${s.id}, '${s.schedule_name}')">Del</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function scheduleForm(s = {}) {
+  const busOptions   = buses.map(b   => `<option value="${b.id}"   ${s.bus_id===b.id?'selected':''}>${b.bus_number} (${b.bus_type})</option>`).join('');
+  const driverOptions= drivers.map(d => `<option value="${d.id}"   ${s.driver_id===d.id?'selected':''}>${d.name}</option>`).join('');
+  const routeOptions = routes.map(r  => `<option value="${r.id}"   ${s.route_id===r.id?'selected':''}>${r.route_number} — ${r.route_name}</option>`).join('');
+
+  return `
+  <div style="background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.15);border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:var(--amber);">
+    ⚠ Conflict detection is active — overlapping bus or driver assignments will be rejected automatically.
+  </div>
+  <div class="form-grid">
+    <div class="form-group form-full">
+      <label class="form-label">Schedule Name *</label>
+      <input class="form-control" id="f-sched_name" value="${s.schedule_name || ''}" placeholder="Morning Route Alpha">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Bus *</label>
+      <select class="form-control" id="f-bus_id"><option value="">Select bus...</option>${busOptions}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Driver *</label>
+      <select class="form-control" id="f-driver_id"><option value="">Select driver...</option>${driverOptions}</select>
+    </div>
+    <div class="form-group form-full">
+      <label class="form-label">Route *</label>
+      <select class="form-control" id="f-route_id"><option value="">Select route...</option>${routeOptions}</select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Schedule Date *</label>
+      <input class="form-control" type="date" id="f-sched_date" value="${s.schedule_date || ''}">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Schedule Type</label>
+      <select class="form-control" id="f-sched_type">
+        <option value="Linked" ${s.schedule_type==='Linked'?'selected':''}>Linked (Crew stays with bus)</option>
+        <option value="Unlinked" ${s.schedule_type==='Unlinked'?'selected':''}>Unlinked (Crew rotates)</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Departure Time *</label>
+      <input class="form-control" type="time" id="f-dep_time" value="${s.departure_time || ''}">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Arrival Time *</label>
+      <input class="form-control" type="time" id="f-arr_time" value="${s.arrival_time || ''}">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-control" id="f-sched_status">
+        ${['Scheduled','In Progress','Completed','Cancelled'].map(st => `<option ${s.status===st?'selected':''}>${st}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitSchedule(${s.id || 'null'})">${s.id ? 'Save Changes' : 'Create Schedule'}</button>
+  </div>`;
+}
+
+function openAddScheduleModal()  { openModal('Create New Schedule', scheduleForm()); }
+function openEditScheduleModal(s){ openModal('Edit Schedule', scheduleForm(s)); }
+
+async function submitSchedule(id) {
+  const payload = {
+    schedule_name:  document.getElementById('f-sched_name').value.trim(),
+    bus_id:         parseInt(document.getElementById('f-bus_id').value),
+    driver_id:      parseInt(document.getElementById('f-driver_id').value),
+    route_id:       parseInt(document.getElementById('f-route_id').value),
+    schedule_date:  document.getElementById('f-sched_date').value,
+    schedule_type:  document.getElementById('f-sched_type').value,
+    departure_time: document.getElementById('f-dep_time').value,
+    arrival_time:   document.getElementById('f-arr_time').value,
+    status:         document.getElementById('f-sched_status').value,
+  };
+
+  const required = ['schedule_name','bus_id','driver_id','route_id','schedule_date','departure_time','arrival_time'];
+  for (const f of required) {
+    if (!payload[f]) { showToast(`Please fill all required fields (${f})`, 'error'); return; }
+  }
+
+  const res = id ? await API.put(`/schedules/${id}`, payload) : await API.post('/schedules/', payload);
+  if (res.success) { showToast(res.message, 'success'); closeModal(); loadSchedules(); }
+  else showToast(res.message, 'error');
+}
+
+async function deleteSchedule(id, name) {
+  confirmDelete(`Delete schedule <strong>${name}</strong>?`, async () => {
+    const res = await API.delete(`/schedules/${id}`);
+    if (res.success) { showToast('Schedule deleted', 'success'); loadSchedules(); }
+    else showToast(res.message, 'error');
+  });
+}
+
+// Init
+loadDropdownData();
+loadSchedules();
+</script>
+{% endblock %}

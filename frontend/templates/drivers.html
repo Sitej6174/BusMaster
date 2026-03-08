@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block title %}Driver Management{% endblock %}
+{% block page_title %}Drivers{% endblock %}
+{% block page_subtitle %}Crew Management{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary" onclick="openAddDriverModal()">+ Add Driver</button>
+{% endblock %}
+
+{% block content %}
+<div class="table-container">
+  <div class="table-header">
+    <span class="table-header-title">All Drivers <span id="driver-count" style="color:var(--amber);margin-left:8px;"></span></span>
+    <select class="form-control" style="width:150px;padding:6px 12px;" onchange="filterDrivers(this.value)">
+      <option value="">All Status</option>
+      <option value="Available">Available</option>
+      <option value="On Duty">On Duty</option>
+      <option value="Off Duty">Off Duty</option>
+    </select>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>License No.</th>
+        <th>Phone</th>
+        <th>Email</th>
+        <th>Hire Date</th>
+        <th>Status</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="drivers-tbody">
+      <tr><td colspan="7" style="text-align:center;padding:30px;color:var(--grey-300);">Loading...</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allDrivers = [];
+
+async function loadDrivers() {
+  const res = await API.get('/drivers/');
+  if (!res.success) { showToast('Failed to load drivers', 'error'); return; }
+  allDrivers = res.data;
+  renderDrivers(allDrivers);
+  document.getElementById('driver-count').textContent = `(${allDrivers.length})`;
+}
+
+function filterDrivers(status) {
+  renderDrivers(status ? allDrivers.filter(d => d.status === status) : allDrivers);
+}
+
+function renderDrivers(drivers) {
+  const tbody = document.getElementById('drivers-tbody');
+  if (!drivers.length) { tbody.innerHTML = emptyState('No drivers found. Add your first driver!'); return; }
+  tbody.innerHTML = drivers.map(d => `
+    <tr>
+      <td style="font-weight:500;">${d.name}</td>
+      <td><span class="mono">${d.license_number}</span></td>
+      <td>${d.phone || '—'}</td>
+      <td>${d.email || '—'}</td>
+      <td>${formatDate(d.hire_date)}</td>
+      <td>${statusBadge(d.status)}</td>
+      <td>
+        <div class="actions-cell">
+          <button class="btn btn-secondary btn-sm" onclick="openEditDriverModal(${JSON.stringify(d).replace(/"/g,'&quot;')})">Edit</button>
+          <button class="btn btn-danger btn-sm" onclick="deleteDriver(${d.id}, '${d.name}')">Delete</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function driverForm(d = {}) {
+  return `
+  <div class="form-grid">
+    <div class="form-group form-full">
+      <label class="form-label">Full Name *</label>
+      <input class="form-control" id="f-name" value="${d.name || ''}" placeholder="Driver full name">
+    </div>
+    <div class="form-group">
+      <label class="form-label">License Number *</label>
+      <input class="form-control" id="f-license" value="${d.license_number || ''}" placeholder="LIC-12345">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Phone</label>
+      <input class="form-control" id="f-phone" value="${d.phone || ''}" placeholder="+1 555 000 0000">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Email</label>
+      <input class="form-control" id="f-email" type="email" value="${d.email || ''}" placeholder="driver@email.com">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Hire Date</label>
+      <input class="form-control" id="f-hire_date" type="date" value="${d.hire_date || ''}">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Status</label>
+      <select class="form-control" id="f-status">
+        ${['Available','On Duty','Off Duty'].map(s => `<option ${d.status===s?'selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+    <button class="btn btn-primary" onclick="submitDriver(${d.id || 'null'})">${d.id ? 'Save Changes' : 'Add Driver'}</button>
+  </div>`;
+}
+
+function openAddDriverModal() { openModal('Add New Driver', driverForm()); }
+function openEditDriverModal(d) { openModal('Edit Driver — ' + d.name, driverForm(d)); }
+
+async function submitDriver(id) {
+  const payload = {
+    name:           document.getElementById('f-name').value.trim(),
+    license_number: document.getElementById('f-license').value.trim(),
+    phone:          document.getElementById('f-phone').value.trim(),
+    email:          document.getElementById('f-email').value.trim(),
+    hire_date:      document.getElementById('f-hire_date').value || null,
+    status:         document.getElementById('f-status').value,
+  };
+  if (!payload.name || !payload.license_number) {
+    showToast('Name and license number are required', 'error'); return;
+  }
+  const res = id ? await API.put(`/drivers/${id}`, payload) : await API.post('/drivers/', payload);
+  if (res.success) { showToast(res.message, 'success'); closeModal(); loadDrivers(); }
+  else showToast(res.message, 'error');
+}
+
+async function deleteDriver(id, name) {
+  confirmDelete(`Delete driver <strong>${name}</strong>? This cannot be undone.`, async () => {
+    const res = await API.delete(`/drivers/${id}`);
+    if (res.success) { showToast('Driver deleted', 'success'); loadDrivers(); }
+    else showToast(res.message, 'error');
+  });
+}
+
+loadDrivers();
+</script>
+{% endblock %}
